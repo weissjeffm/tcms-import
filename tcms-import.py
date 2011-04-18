@@ -86,7 +86,7 @@ def upload_all(f, planid, build, productid, product_version_id):
     global n,tree,priorityid,categoryid
     tree = etree.parse(f)
     n = NitrateKerbXmlrpc(url)
-    print("Logged in as: " + str(n.get_me()))
+    #print("Logged in as: " + str(n.get_me()))
 
     build = get_build(productid, build)
     run = create_run(planid, build, productid, product_version_id)
@@ -102,7 +102,7 @@ def upload_all(f, planid, build, productid, product_version_id):
         name = test.attrib.get("name")
         methodsig = test.attrib.get("signature")
         
-        print("testname is %s" % name)
+        #print("testname is %s" % name)
         clazz = tree.xpath("//class[test-method[@name='%s']]" % name)[0].attrib.get("name")
         ngstatus = test.attrib.get("status")
         sig = "%s.%s" % (clazz, methodsig.rsplit("(")[0])
@@ -113,9 +113,6 @@ def upload_all(f, planid, build, productid, product_version_id):
                                      "build": build,
                                      "case_run_status": status})
     print("Uploaded %d test results." % len(all_tests))
-
-def read(f):
-    return etree.parse(f)
     
 def groups_for_method(c,m):
     return tree.xpath("//group[method[@name='%s' and @class='%s']]/@name" % (m,c))

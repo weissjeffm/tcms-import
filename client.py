@@ -11,13 +11,15 @@ planid = None
 build = None
 productid = None
 priorityid = None
+categoryid = None
 product_version_id = None
+
 def main():
     global planid,build,product_version_id,productid
     filename=""
     try:
         opts, args = getopt.getopt(sys.argv[1:], "hp:f:b:v:t:", ["help", "url="])
-        print(opts)
+        #print(opts)
     except getopt.GetoptError, err:
         # print help information and exit:
         print str(err) # will print something like "option -a not recognized"
@@ -31,6 +33,8 @@ def main():
             filename = a
         elif o in ("-t"):
             planid = a
+        elif o in ("-b"):
+            build = a
         elif o in ("-p"):
             productid = a
         elif o in ("-v"):
@@ -43,6 +47,9 @@ def main():
 
     upload_all(filename, planid, build, productid, product_version_id)
 
+def usage():
+    print("tcms-import.py\n-f [testng result xml filename]\n-t [test plan id]\n-b [build name]\n-p [product id]\n-v [product version id]\n\nImports into tcms all the results from a testng result file.  The various IDs can be gotten from the TCMS web interface (the easiest way is just to hover over links to those resources, the ID is part of the link URL).  \n\nYou must have a valid kerberos ticket (by running kinit) before running this script.  \n\nThis script depends on these packages: python-lxml, python-kerberos.")
+
 def create_run(planid, build, productid, product_version_id):
     return n.server.TestRun.create({"plan": planid, 
                                     "build": build, 
@@ -53,16 +60,17 @@ def create_run(planid, build, productid, product_version_id):
                             
 def get_build(productid, build):
     b = n.server.Build.check_build(build,productid)
-    print(b)
+    #print(b)
     if b.get("args"):
         b = n.server.Build.create({"product": productid, "name": build})
         print("Build doesn't exist in database, creating. \n%s" % str(b))
     return b.get("build_id")
 
 def get_case(productid, categoryid, planid, alias, summary):
+    print("using pri %s sum %s alias %s " % (priorityid, summary, alias))
     try:
         tc = n.server.TestCase.filter({"alias": alias})[0]
-        print(tc)
+        #print(tc)
     except IndexError:
         tc = n.server.TestCase.create({"product": productid, 
                                        "category": categoryid,
@@ -75,31 +83,36 @@ def get_case(productid, categoryid, planid, alias, summary):
     return tc.get("case_id")
 
 def upload_all(f, planid, build, productid, product_version_id):
-    global n,tree
+    global n,tree,priorityid,categoryid
     tree = etree.parse(f)
     n = NitrateKerbXmlrpc(url)
     print("Logged in as: " + str(n.get_me()))
 
     build = get_build(productid, build)
-    run = create_run(planid, build, product_version_id)
+    run = create_run(planid, build, productid, product_version_id)
     priorityid = n.server.TestCase.check_priority("P1").get("id")
-    all_tests = tree.xpath("//test-method")
+    categoryid = n.server.Product.check_category("--default--", productid).get("id")
+    all_tests = filter(lambda tc: tc.attrib.get("is-config") == None, tree.xpath("//test-method"))
+
+    statuses = {"PASS": n.server.TestCaseRun.check_case_run_status("PASSED").get("id"),
+                "FAIL": n.server.TestCaseRun.check_case_run_status("FAILED").get("id"), 
+                "SKIP": n.server.TestCaseRun.check_case_run_status("BLOCKED").get("id")}
+
     for test in all_tests:
         name = test.attrib.get("name")
-        clazz = tree.xpath("//class[/test-method[@name='%s']]" % name)[0].attrib.get("name")
-        desc = test.attrib.get("description")
+        methodsig = test.attrib.get("signature")
+        
+        print("testname is %s" % name)
+        clazz = tree.xpath("//class[test-method[@name='%s']]" % name)[0].attrib.get("name")
         ngstatus = test.attrib.get("status")
-        sig = "%s.%s" % (clazz, name)
-        statuses = {"PASS": "PASSED",
-                    "FAIL": "FAILED",
-                    "SKIP": "BLOCKED"}
+        sig = "%s.%s" % (clazz, methodsig.rsplit("(")[0])
+        desc = test.attrib.get("description") or sig
         status = statuses[ngstatus]
         n.server.TestCaseRun.create({"run": run,
-                                     "case": get_case(),
+                                     "case": get_case(productid, categoryid, planid, sig, desc),
                                      "build": build,
-                                     "case_run_status": status   
-                })
-
+                                     "case_run_status": status})
+    print("Uploaded %d test results." % len(all_tests))
 
 def read(f):
     return etree.parse(f)

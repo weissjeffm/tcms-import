@@ -5,17 +5,8 @@ import getopt, sys
 from lxml import etree
 
 url = 'https://tcms.engineering.redhat.com/xmlrpc/'
-tree = None
-n = None 
-planid = None
-build = None
-productid = None
-priorityid = None
-categoryid = None
-product_version_id = None
 
 def main():
-    global planid,build,product_version_id,productid
     filename=""
     try:
         opts, args = getopt.getopt(sys.argv[1:], "hp:f:b:v:t:", ["help", "url="])
@@ -49,16 +40,8 @@ def main():
 
 def usage():
     print("tcms-import.py\n-f [testng result xml filename]\n-t [test plan id]\n-b [build name]\n-p [product id]\n-v [product version id]\n\nImports into tcms all the results from a testng result file.  The various IDs can be gotten from the TCMS web interface (the easiest way is just to hover over links to those resources, the ID is part of the link URL).  \n\nYou must have a valid kerberos ticket (by running kinit) before running this script.  \n\nThis script depends on these packages: python-lxml, python-kerberos.")
-
-def create_run(planid, build, productid, product_version_id):
-    return n.server.TestRun.create({"plan": planid, 
-                                    "build": build, 
-                                    "manager": n.get_me().get("id"),
-                                    "product": productid,
-                                    "summary": str(tree.xpath("//suite/@name")[0]), 
-                                    "product_version": product_version_id}).get("run_id")
                             
-def get_build(productid, build):
+def get_build(n, productid, build):
     b = n.server.Build.check_build(build,productid)
     #print(b)
     if b.get("args"):
@@ -66,7 +49,7 @@ def get_build(productid, build):
         print("Build doesn't exist in database, creating. \n%s" % str(b))
     return b.get("build_id")
 
-def get_case(productid, categoryid, planid, alias, summary):
+def get_case(n, productid, categoryid, planid, priorityid, alias, summary):
     print("using pri %s sum %s alias %s " % (priorityid, summary, alias))
     try:
         tc = n.server.TestCase.filter({"alias": alias})[0]
@@ -83,13 +66,19 @@ def get_case(productid, categoryid, planid, alias, summary):
     return tc.get("case_id")
 
 def upload_all(f, planid, build, productid, product_version_id):
-    global n,tree,priorityid,categoryid
+    #global n,tree,priorityid,categoryid
     tree = etree.parse(f)
     n = NitrateKerbXmlrpc(url)
     #print("Logged in as: " + str(n.get_me()))
 
-    build = get_build(productid, build)
-    run = create_run(planid, build, productid, product_version_id)
+    build = get_build(n, productid, build)
+    run = n.server.TestRun.create({"plan": planid, 
+                                    "build": build, 
+                                    "manager": n.get_me().get("id"),
+                                    "product": productid,
+                                    "summary": str(tree.xpath("//suite/@name")[0]), 
+                                    "product_version": product_version_id}).get("run_id")
+
     priorityid = n.server.TestCase.check_priority("P1").get("id")
     categoryid = n.server.Product.check_category("--default--", productid).get("id")
     all_tests = filter(lambda tc: tc.attrib.get("is-config") == None, tree.xpath("//test-method"))
@@ -108,10 +97,17 @@ def upload_all(f, planid, build, productid, product_version_id):
         sig = "%s.%s" % (clazz, methodsig.rsplit("(")[0])
         desc = test.attrib.get("description") or sig
         status = statuses[ngstatus]
+        exceptions = tree.xpath("//test-method[@name='%s']//full-stacktrace" % name)
+        if len(exceptions) > 0:
+            notes = exceptions[0].text
+        else:
+            notes = ""
         n.server.TestCaseRun.create({"run": run,
-                                     "case": get_case(productid, categoryid, planid, sig, desc),
+                                     "case": get_case(n, productid, categoryid, planid, priorityid, sig, desc),
                                      "build": build,
-                                     "case_run_status": status})
+                                     "case_run_status": status,
+                                     "notes": notes})
+
     print("Uploaded %d test results." % len(all_tests))
     
 def groups_for_method(c,m):
